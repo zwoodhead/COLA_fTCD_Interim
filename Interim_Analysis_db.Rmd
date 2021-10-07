@@ -28,6 +28,7 @@ library(corrr) #added by DB for easy correlations
 library(plyr)
 library(qpcR) #used in Kievit script
 library(ggpubr)
+library(reshape2)
 options(scipen=999)
 ```
 
@@ -148,6 +149,7 @@ for (t in 1:6){
  # abline(v = mean(SHdata[ , (2*t+2)],na.rm=T),lty=2)
   abline(h=0,col='grey')
    abline(v=0,col='grey')
+   #L handers pink and R handers black
   # Organise output
   LI_splithalf$r[t] <- round(my_test$estimate, 3)
   LI_splithalf$lowCI[t] <- round(my_test$conf.int[1], 3)
@@ -167,7 +169,7 @@ The pirate plot shows LI values for the six tasks (A = Word Generation, B = Sent
 ```{r LIstats, echo=FALSE, warning=FALSE}
 
 LIdata <- mydata %>% 
-  select(Gorilla_ID, Hand_R, A_mean_LI, B_mean_LI, C_mean_LI, D_mean_LI, E_mean_LI, F_mean_LI)
+  dplyr::select(Gorilla_ID, Hand_R, A_mean_LI, B_mean_LI, C_mean_LI, D_mean_LI, E_mean_LI, F_mean_LI)
 colnames(LIdata) <- c('ID','Hand','A','B','C','D','E','F')
 longdata <- pivot_longer(data = LIdata, cols = c(3:8), names_to = 'Task', values_to = 'LI')
 pirateplot(data = longdata, LI ~ Task * Hand)
@@ -221,7 +223,7 @@ The analysis conducted by Woodhead et al (2019, 2020) used an exploratory bifact
 
 ```{r modelfit}
 
-#just creating clones of variables for compatibility with original script
+#just creating clones of variables for compatibility of names with original script
 
 alldata$P1 <- alldata$A_mean_LI
 alldata$P2 <- alldata$B_mean_LI
@@ -230,6 +232,67 @@ alldata$R1 <- alldata$D_mean_LI
 alldata$R2 <- alldata$E_mean_LI
 alldata$R3 <- alldata$F_mean_LI
 
+#Add correlation matrix
+
+LIcols <- c("P1","P2","P3","R1","R2","R3")
+wantcols <- c("Sex_F","Hand_R",LIcols)
+
+```
+
+
+```{r trianglefunction,echo=F}
+ get_upper_tri <- function(cormat){
+    cormat[lower.tri(cormat,diag=T)]<- NA
+    return(cormat)
+  }
+```
+
+```{r heatmapfunction}
+#Make a heatmap
+# http://www.sthda.com/english/wiki/ggplot2-quick-correlation-matrix-heatmap-r-software-and-data-visualization
+makeheatmap <- function(mydf,mycols){
+cormat <- cor(mydf[,mycols],use="complete.obs")
+
+melted_cormat <- melt(cormat)
+head(melted_cormat)
+
+upper_tri <- get_upper_tri(cormat)
+# Melt the correlation matrix
+
+melted_cormat <- melt(upper_tri, na.rm = TRUE)
+# Heatmap
+
+ggheatmap <- ggplot(data = melted_cormat, aes(Var2, Var1, fill = value))+
+ geom_tile(color = "white")+
+ scale_fill_gradient2(low = "blue", high = "red", mid = "white", 
+   midpoint = 0.5, limit = c(0,1), space = "Lab", 
+   name="Pearson\nCorrelation") +
+  theme_minimal()+ 
+ theme(axis.text.x = element_text(angle = 45, vjust = 1, 
+    size = 12, hjust = 1))+
+ coord_fixed()
+
+myheatmap <- ggheatmap + 
+geom_text(aes(Var2, Var1, label = round(value,3)), color = "black", size = 4) +
+theme(
+  axis.title.x = element_blank(),
+  axis.title.y = element_blank(),
+  panel.grid.major = element_blank(),
+  panel.border = element_blank(),
+  panel.background = element_blank(),
+  axis.ticks = element_blank(),
+  legend.justification = c(1, 0),
+  legend.position = c(0.5, 0.7),
+  legend.direction = "horizontal")+
+  guides(fill = guide_colorbar(barwidth = 7, barheight = 1,
+                title.position = "top", title.hjust = 0.5))
+
+return(myheatmap)}
+```
+
+
+```{r factormodels,echo=F}
+#Single factor model - this is just the definition. It is run later
 model.h1 <- '
 f1 =~ P1 + P2 + P3
 f2 =~ R1 + R2 + R3
@@ -237,6 +300,8 @@ f2 =~ R1 + R2 + R3
 f1 ~~ 1*f2  #single factor model, f1 and f2 constrained to covariance of one
 
 ' 
+
+#2 factor production/reception model
 model.h2 <- '
 f1 =~ P1 + P2 + P3
 f2 =~ R1 + R2 + R3  #2 factor model: no constraint on covariance
@@ -244,62 +309,95 @@ f2 =~ R1 + R2 + R3  #2 factor model: no constraint on covariance
 '
 
 fit1 <- cfa(model.h1, data=alldata)
-fit2 <- cfa(model.h2, data=alldata)
 sfit1 <-summary(fit1,fit.measures=TRUE)
+sfit1
+
+fit2 <- cfa(model.h2, data=alldata)
 sfit2 <- summary(fit2,fit.measures=TRUE)
+sfit2
 
 anova(fit1,fit2)
 
+
+
 ```
-The fit of the two-factor model is poor. Therefore, as planned we divide the sample into two random halves, before proceeding to drop or add paths from the model in Figure 4 to improve fit. When the optimal model has been identified, it will then be tested in confirmatory factor analysis using the hold-out portion of the data.
+The fit of both the one-factor and the two-factor model is poor. Therefore, as planned we divide the sample into two random halves, before proceeding to drop or add paths from the model in Figure 4 to improve fit. When the optimal model has been identified, it will then be tested in confirmatory factor analysis using the hold-out portion of the data.
 
 ```{r improvemodel,echo=F}
 
+#check what data looks like
+
+myheatmap <- makeheatmap(alldata,LIcols)
+myheatmap
+
 set.seed(2)
-wantcols <- c("halfgroup","Sex_F","Hand_R","P1","P2","P3","R1","R2","R3")
-LIcols <- c("P1","P2","P3","R1","R2","R3")
+
+
+#The heatmap suggests that P3 belongs with R1-R3. Try that model
+#2 factor model revised
+model.h3 <- '
+f1 =~ P1 + P2
+f2 =~ P3 + R1 + R2 + R3  #revised 2 factor model: no constraint on covariance
+
+'
+
 alldata$halfgroup <-1+ rbinom(nrow(alldata),1,.5) #random assignment to 1 or 2
+halfdata <- alldata[alldata$halfgroup==1,]
+fit1h <- cfa(model.h1, data=halfdata)
+sfit1h <- summary(fit1h,fit.measures=TRUE)
+sfit1h
+
+fit3h <- cfa(model.h3, data=halfdata)
+sfit3h <- summary(fit3h,fit.measures=TRUE)
+sfit3h
+
+anova(fit1h,fit3h)
+#v poor fit!
+
+#Try model where P3 loads on both factors
+
+model.h4 <- '
+f1 =~ P1 + P2 + P3
+f2 =~ P3 + R1 + R2 + R3  
+
+'
+fit4h <- cfa(model.h4, data=halfdata)
+sfit4h <- summary(fit4h,fit.measures=TRUE)
+sfit4h
+
+anova(fit1h,fit4h)
+
+#This gives better fit.
+
+#Now try on half2
+halfdata2 <- alldata[alldata$halfgroup==2,]
+
+fit1h2 <- cfa(model.h1, data=halfdata2)
+sfit1h2 <- summary(fit1h2,fit.measures=TRUE)
+sfit1h2
+
+fit4h2 <- cfa(model.h4, data=halfdata2)
+sfit4h2 <- summary(fit4h2,fit.measures=TRUE)
+sfit4h2
+
+
+
+anova(fit1h2,fit4h2)
+
+
+```
+
+```{r explorecorrs, echo=F}
 
 
 
 correlate(alldata[alldata$Hand_R=='Right',LIcols])
 correlate(alldata[alldata$Hand_R=='Left',LIcols])
 
+
+wantcols <- c("Sex_F","Hand_R",LIcols)
 dopdat <- alldata[,wantcols]
-
-#Correlation pattern suggests in both groups (esp R handers) we'd get good fit if factor 1 was P1-P2, and factor 2 was P3,R1,R2,R3
-
-
-model.h2b <- '
-f1 =~ P1 + P2 +P3
-f2 =~ P3 + R1 + R2 + R3  #2 factor model: no constraint on covariance
-
-'
-
-fit1b <- cfa(model.h1, data=halfdata)
-fit2b <- cfa(model.h2b, data=halfdata)
-sfit1b <-summary(fit1b,fit.measures=TRUE)
-sfit2b <- summary(fit2b,fit.measures=TRUE)
-
-anova(fit1b,fit2b)
-
-#omit P3
-model.h2c <- '
-f1 =~ P1 + P2 
-f2 =~R1 + R2 + R3  #2 factor model: no constraint on covariance
-
-'
-
-fit1c <- cfa(model.h1, data=halfdata)
-fit2c <- cfa(model.h2c, data=halfdata)
-sfit1c <-summary(fit1c,fit.measures=TRUE)
-sfit2c <- summary(fit2c,fit.measures=TRUE)
-
-anova(fit1c,fit2c)
-
-```
-
-```{r explorecorrs, echo=F}
+offset <- which(colnames(dopdat)=='P1')-1
 dopdat$colour<-2
 dopdat$colour[dopdat$Hand_R=='Right']<-1
 for (i in 1:5){
@@ -307,43 +405,22 @@ for (i in 1:5){
     fullnames<-c('WordGen','SentGen','PhonDec','WordComp','SentComp','SyntaxDec')
     namex <- fullnames[i]
     namey <- fullnames[j]
-    plot(dopdat[,(i+3)],dopdat[,(j+3)],main=paste0(namex,"/",namey),xlab=namex,ylab=namey,
+    plot(dopdat[,(i+2)],dopdat[,(j+2)],main=paste0(namex,"/",namey),xlab=namex,ylab=namey,
     col=dopdat$colour,pch=16,ylim=c(-6,10),xlim=c(-6,10))
-    abline(h=mean(dopdat[dopdat$Hand_R=="Left",(j+3)],na.rm=T),col=2,lty=2)
-    abline(h=mean(dopdat[dopdat$Hand_R=="Right",(j+3)],na.rm=T),col=1,lty=2)
-    abline(v=mean(dopdat[dopdat$Hand_R=="Left",(i+3)],na.rm=T),col=2,lty=2)
-    abline(v=mean(dopdat[dopdat$Hand_R=="Right",(i+3)],na.rm=T),col=1,lty=2)
+    abline(h=mean(dopdat[dopdat$Hand_R=="Left",(j+offset)],na.rm=T),col=2,lty=2)
+    abline(h=mean(dopdat[dopdat$Hand_R=="Right",(j+offset)],na.rm=T),col=1,lty=2)
+    abline(v=mean(dopdat[dopdat$Hand_R=="Left",(i+offset)],na.rm=T),col=2,lty=2)
+    abline(v=mean(dopdat[dopdat$Hand_R=="Right",(i+offset)],na.rm=T),col=1,lty=2)
     abline(v=0,col='grey',lty=1)
     abline(h=0,col='grey',lty=1)
-    corL <- cor(dopdat[dopdat$Hand_R=="Left",(j+3)],dopdat[dopdat$Hand_R=="Left",(i+3)],use="complete.obs")
-    corR <- cor(dopdat[dopdat$Hand_R=="Right",(j+3)],dopdat[dopdat$Hand_R=="Right",(i+3)],use="complete.obs")
+    corL <- cor(dopdat[dopdat$Hand_R=="Left",(j+offset)],dopdat[dopdat$Hand_R=="Left",(i+offset)],use="complete.obs")
+    corR <- cor(dopdat[dopdat$Hand_R=="Right",(j+offset)],dopdat[dopdat$Hand_R=="Right",(i+offset)],use="complete.obs")
     text(-4,8,paste0("Left-hander: r = ",round(corL,3)),col=2)
     text(-4,7,paste0("Right_hander: r = ",round(corR,3)),col=1)
   }
 }
-
-#principal components analysis
-dopdat2 <- dopdat[complete.cases(dopdat),]
-left.pca <-  prcomp(dopdat2[dopdat2$Hand_R=='Left',c(4:5,7:9)])
-right.pca <-  prcomp(dopdat2[dopdat2$Hand_R=='Right',c(4:5,7:9)])
-summary(left.pca)
-summary(right.pca)
-
-all.pca <- prcomp(dopdat2[,c(4:5,7:9)],center=T,scale=T)
-all.pca
-summary(all.pca)
-
-screeplot(all.pca, type = "l", npcs = 4, main = "Screeplot of the first 4 PCs")
-abline(h = 1, col="red", lty=5)
-legend("topright", legend=c("Eigenvalue = 1"),
-       col=c("red"), lty=5, cex=0.6)
-
-plot(all.pca$x[,1],all.pca$x[,2], xlab="PC1 ", ylab = "PC2 ", main = "PC1 / PC2 - plot",col=dopdat2$colour)
-abline(v=mean(all.pca$x[dopdat2$Hand_R=='Right',1]),col=1)
-abline(v=mean(all.pca$x[dopdat2$Hand_R=='Left',1]),col=2)
-abline(h=mean(all.pca$x[dopdat2$Hand_R=='Right',2]),col=1)
-abline(h=mean(all.pca$x[dopdat2$Hand_R=='Left',2]),col=2)
 ```
+
 
 ## Step 4. 
 __The pattern of variances and covariances will differ for right-handers and left-handers, with better model fit being obtained when separate 2-factor models are estimated for left- vs right-handers.__
@@ -353,11 +430,19 @@ The measurement invariance command tests a series of models which progressively 
 ```{r testLRdiffmodel}
 
 
-fit2a <- cfa(model.h2b, data=alldata,group="Hand_R")
+mydf<- dopdat[dopdat$Hand_R=='Right',]
+Rcorrs <- makeheatmap(mydf,LIcols)
+mydf<- dopdat[dopdat$Hand_R=='Left',]
+Lcorrs <- makeheatmap(mydf,LIcols)
+Rcorrs
+Lcorrs
 
-sfit2a <- summary(fit2a,fit.measures=TRUE)
 
-measurementInvariance(model=model.h2, data=alldata,group="Hand_R")
+fit4 <- cfa(model.h4, data=alldata,group="Hand_R")
+
+sfit4 <- summary(fit4,fit.measures=TRUE)
+
+measurementInvariance(model=model.h4, data=alldata,group="Hand_R")
 
 ```
 
@@ -375,19 +460,21 @@ dopdat$catx4<-1
 dopdat$catx5<-1
 dopdat$catx6<-1
 
+offset2 <- which(colnames(dopdat)=='catx1')-1
+
 chitab<-data.frame(matrix(NA,ncol=11,nrow=6))
 for (mycol in 1: 6){
-  w<-which(dopdat[,(mycol+2)]<0) #find values below zero
-  dopdat[w,(mycol+8)]<-0 #recode catx value to zero
-  t<-table(dopdat[,(mycol+8)],dopdat$Lhand)
+  w<-which(dopdat[,(mycol+offset)]<0) #find values below zero
+  dopdat[w,(mycol+offset2)]<-0 #recode catx value to zero
+  t<-table(dopdat[,(mycol+offset2)],dopdat$Hand_R)
   tp<-round(prop.table(t,2),2) #proportions by handedness
-  chitab[mycol,1]<-colnames(dopdat)[(mycol+2)]
+  chitab[mycol,1]<-colnames(dopdat)[(mycol+offset)]
   chitab[mycol,c(2,4,6,8)]<-t
   chitab[mycol,c(3,5,7,9)]<-tp
-  chitab[mycol,10] <- chisq.test(t)$statistic
-  chitab[mycol,11] <- chisq.test(t)$p.value
+  chitab[mycol,10] <- round(chisq.test(t)$statistic,2)
+  chitab[mycol,11] <- round(chisq.test(t)$p.value,3)
 }
-colnames(chitab)<-c('Measure','Rhand.Rbrain','RH.Rb%','Rhand.Lbrain','RH.Lb%','Lhand.Rbrain','LH.Rb%','Lhand.Lbrain','LH.Lb%','chisq','p')
+colnames(chitab)<-c('Measure','LH.Rbrain','LH.Rb%','LH.Lbrain','LH.Lb%','RH.Rbrain','RH.Rb%','RH.Lbrain','RH.Lb%','chisq','p')
 flextable(chitab)
 
 ```
