@@ -1,13 +1,16 @@
 ---
 title: "InterimAnalysis"
-author: "Zoe Woodhead"
-date: "21/09/2021"
+author: "Zoe Woodhead/Dorothy Bishop"
+date: "October 2021"
 output: html_document
 ---
+
+This script is based on original analysis_plan_COLARR.rmd.  
 
 ```{r setup, include=FALSE}
 knitr::opts_chunk$set(echo = TRUE)
 require(tidyverse)
+require(here) #to find filepaths
 require(yarrr)
 require(kableExtra)
 
@@ -29,7 +32,27 @@ library(plyr)
 library(qpcR) #used in Kievit script
 library(ggpubr)
 library(reshape2)
+library(ggExtra)
 options(scipen=999)
+```
+
+```{r readdata,echo=F}
+odat <- read.csv('onlinedata.csv')
+ddat <- read.csv('fTCD_data.csv')
+
+#Preliminary wrangling
+colnames(odat)[1:2]<-c('row','id')
+colnames(ddat)[1]<-'id'
+
+#dichotic LI doesn't seem to be computed, so do that now
+odat$DL_LI <- (odat$DL.L-odat$DL.R)/(odat$DL.L+odat$DL.R)
+
+#make handedness variable identical for odat and ddat
+handlist<-odat$handedness
+w<-which(handlist=='Right')
+odat <- dplyr::rename(odat,Hand_R=handedness)
+odat$Hand_R <- 0
+odat$Hand_R[w]<-1
 ```
 
 ## Demographics
@@ -37,43 +60,38 @@ options(scipen=999)
 This is an interim analysis of fTCD data for the COLA registered report project.
 
 ```{r readdata, echo=FALSE, warning=FALSE}
-alldata1 <- read.csv('fTCD_data.csv')
+
 
 tasks <- c('WG','SG','PD','WC','SC','SD')
 sites <- c('Bangor','Lancaster','Lincoln','Oxford','UCL','UWA')
-alldata1$Site <- as.factor(alldata1$Site)
-alldata1$Sex_F <- as.factor(alldata1$Sex_F)
-levels(alldata1$Sex_F) <- c('Male', 'Female')
-alldata1$Hand_R <- as.factor(alldata1$Hand_R)
-levels(alldata1$Hand_R) <- c('Left', 'Right')
-alldata1$Gorilla_ID <- as.factor(alldata1$Gorilla_ID)
+ddat$Site <- as.factor(ddat$Site)
 
 # How many participants were tested?
-n_attended <- length(alldata1$Gorilla_ID)
+n_attended <- length(ddat$id)
 
 # How many datasets were acquired?
-n_acquired <- length(na.omit(alldata1$A_nMark))
+n_acquired <- length(na.omit(ddat$A_nMark))
 
 # Participant Counts
 ParticipantCounts <- matrix(nrow=6, ncol=4, data=NA)
 colnames(ParticipantCounts) <- c('M_LH', 'M_RH','F_LH', 'F_RH')
 rownames(ParticipantCounts) <- sites
 
-for (s in 1:6){
-  site_data <- alldata1 %>% filter(Site == sites[s])
+for (s in 1:length(levels(ddat$Site))){
+  site_data <- ddat %>% filter(Site == sites[s])
   mytable <- table(site_data$Sex_F, site_data$Hand_R)
   ParticipantCounts[s, ] <- c(mytable[1,], mytable[2,])
 } 
 kable(ParticipantCounts)
 
 # Omit rows with no fTCD data
-alldata <- alldata1 %>% filter(!is.na(A_nMark))
+ddat <- ddat %>% filter(!is.na(A_nMark))
 
 # Sex and handedness summary stats
-n_female_L <- length(which(alldata$Sex_F=='Female' & alldata$Hand_R=='Left'))
-n_female_R <- length(which(alldata$Sex_F=='Female' & alldata$Hand_R=='Right'))
-n_male_L <- length(which(alldata$Sex_F=='Male' & alldata$Hand_R=='Left'))
-n_male_R <- length(which(alldata$Sex_F=='Male' & alldata$Hand_R=='Right'))
+n_female_L <- length(which(ddat$Sex_F==1 & ddat$Hand_R==0))
+n_female_R <- length(which(ddat$Sex_F==1 & ddat$Hand_R==1))
+n_male_L <- length(which(ddat$Sex_F==0 & ddat$Hand_R==0))
+n_male_R <- length(which(ddat$Sex_F==0 & ddat$Hand_R==1))
 
 
 ```
@@ -83,52 +101,130 @@ In total, `r n_attended` participants attended an fTCD testing session, and data
 Of the participants from whom data was successfully acquired, `r round((n_female_L + n_female_R) / n_acquired * 100, 2)`% were female and `r round((n_female_L + n_male_L) / n_acquired * 100, 2)`% were left handed.
 
 
-## Data Quality and Outliers
+## Data Quality and Outliers for fTCD
 
 ``` {r dataqual, echo=FALSE, warning=FALSE}
 # Identify outliers
 for (t in 1:6){
-  SEcol <- which(colnames(alldata) == paste0(LETTERS[t], '_mean_se'))
-  Q3<-quantile(alldata[ , SEcol],.75,na.rm=TRUE)
-  Q1<-quantile(alldata[ , SEcol],.25,na.rm=TRUE)
+  SEcol <- which(colnames(ddat) == paste0(LETTERS[t], '_mean_se'))
+  Q3<-quantile(ddat[ , SEcol],.75,na.rm=TRUE)
+  Q1<-quantile(ddat[ , SEcol],.25,na.rm=TRUE)
   Qlimit<-Q3+2.2*(Q3-Q1)
   
-  # If there are at least 10 trials, include the data
-  excludecol = which(colnames(alldata) == paste0(LETTERS[t], '_exclude'))
-  trialscol = which(colnames(alldata) == paste0(LETTERS[t], '_N'))
-  alldata[which(alldata[ , trialscol] > 9), excludecol] <- 0
+# If there are at least 10 trials, include the data
+  excludecol = which(colnames(ddat) == paste0(LETTERS[t], '_exclude'))
+  trialscol = which(colnames(ddat) == paste0(LETTERS[t], '_N'))
+  ddat[which(ddat[ , trialscol] > 9), excludecol] <- 0
   
-  # If the SE is too high, exclude the data
-  alldata[which(alldata[ , SEcol] > Qlimit) , excludecol] <- 1
+  # If the SE is too high, exclude the datatrials
+  ddat[which(ddat[ , SEcol] > Qlimit) , excludecol] <- 1
 }
 
 # Count number of missing or excluded datapoints per task
 n_excludeLI = matrix(data=NA, nrow=1, ncol=6)
 for (t in 1:6){
-  excludecol = which(colnames(alldata) == paste0(LETTERS[t], '_exclude'))
-  n_excludeLI[t] = length(which(alldata[ , excludecol] > 0)) + length(which(is.na(alldata[ , excludecol])))
+  excludecol = which(colnames(ddat) == paste0(LETTERS[t], '_exclude'))
+  n_excludeLI[t] = length(which(ddat[ , excludecol] > 0)) + length(which(is.na(ddat[ , excludecol])))
 }
 
 # Should any participants be excluded?
-alldata$Exclude <- 0
-tmp <- alldata$A_exclude + alldata$B_exclude + alldata$C_exclude + alldata$D_exclude + alldata$E_exclude + alldata$F_exclude
-alldata$Exclude[which(tmp > 1)] = 1
-n_excluded = length(which(alldata$Exclude == 1))
+ddat$Exclude <- 0
+tmp <- ddat$A_exclude + ddat$B_exclude + ddat$C_exclude + ddat$D_exclude + ddat$E_exclude + ddat$F_exclude
+ddat$Exclude[which(tmp > 1)] = 1
+n_excluded = length(which(ddat$Exclude == 1))
 
 # Drop these participants from subsequent analysis
-mydata <- alldata %>% filter(Exclude == 0)
+ddat <- ddat %>% filter(Exclude == 0)
 
 ```
 
+```{r mergefiles}
+#merge - easier to do in steps rather than by using 'merge'!
+#Alldat contains Doppler files with some online summary measures added
+odat<-odat[order(odat$id),]
+ddat<-ddat[order(ddat$id),]
+alldat <- ddat
+nucols <- c('gender','footedness','index_EHI','eyedness','lexTALE','grammar.proportion','DL_LI','DL_zlat','RDT_RT_LI','RDT_RT_zlat','WC_RT_LI','WC_RT_zlat','colourScales_LI','colourScales_zlat','CF_LI','CF_zlat')
+alldat[,nucols]<-NA
+for (i in 1:nrow(alldat)){
+  w<-which(odat$id==alldat$id[i])
+  alldat[i,nucols]<-odat[w,nucols]
+}
+```
 Laterality Indices (LIs) were calculated for all six tasks for all participants. LIs were omitted if the data quality was poor, e.g. if there were insufficient usable trials, or if the standard error across the trial-by-trial LI values was too high (using the Hoaglin Iglewicz criterion). In total, `r sum(n_excludeLI)` LI values (`r round(sum(n_excludeLI) / (6*n_acquired) *100, 2)`%) were excluded from the analysis. If an individual participant had more than one LI value excluded, all of their data was excluded from further analysis; this was the case for `r n_excluded` partipants, leaving `r n_acquired - n_excluded` remaining. 
 
 Split half reliability for each task was assessed by calculating laterality indices using odd or even trials only, and taking the correlation between the two. The table below shows these split half correlations for each task.
 
+```{r scatterplus,echo=F}
+#Function for doing scatterplot with marginal density distributions
+doscatterplus <- function(myfile, taskname,mycolnames,myrange){ #myfile contains group in col 1 and the 2 cols to plot in cols 2-3
+colnames(myfile)[2:4]<- mycolnames
+
+r <- round(cor(myfile$Odd,myfile$Even,use="complete.obs",method="spearman"),3)
+myt<-t.test(myfile$All~myfile$Handed)
+myt2 <- t.test(myfile$All) #single group t-test
+text1 <- paste0('Mean diff from zero: t = ',round(myt2$statistic,2)," ; p = ",round(myt2$p.value,3))
+text2 <- paste0('L vs R handers \n(all trials):\n t = ',round(myt$statistic,2)," ; p = ",round(myt$p.value,3))
+text3 <-paste0('Spearman rho: ',r)
+p <- ggplot(`myfile`, aes_string('Odd','Even')) +
+  aes_string(colour = 'Handed') +
+  geom_point() + theme_bw(15)+
+  annotate("text", x = 3.2, y = -3,label=text3,size=3)+
+  annotate("text", x = -2.5, y = 5,label=text1,size=3)+
+  annotate("text", x = -2.5, y = 3.5,label=text2,size=3)+
+  geom_hline(yintercept=0,linetype="dashed",colour="grey")+
+  geom_vline(xintercept=0,linetype="dashed",colour="grey")+
+  xlim(myrange)+
+  ylim(myrange)+
+  ggtitle(taskname)
+
+p2 <- ggExtra::ggMarginal(
+  p,
+  type = 'density',
+  margins = 'both',
+  size = 5,
+  groupColour = TRUE,
+  groupFill = TRUE
+)
+return(p2)
+
+}
+
+```
+
+
+```{r selectplots,echo=F}
+tasknames <- c('Word generation','Sentence generation','Phonological decision','Word comprehension','Sentence comprehension','Syntactic decision')
+alldat$Handed<-as.factor(alldat$Hand_R)
+levels(alldat$Handed)<-c("Left","Right")
+for (i in 1:length(tasknames)){
+  col1<- paste0(LETTERS[i],"_mean_odd")
+  col2<- paste0(LETTERS[i],"_mean_even")
+  col3 <-paste0(LETTERS[i],"_mean_LI")
+  c1<-which(colnames(alldat)==col1)
+  c2<-which(colnames(alldat)==col2)
+  c3<-which(colnames(alldat)==col3)
+  h <- which(colnames(alldat)=='Handed')
+  
+  myfile <- alldat[,c(h,c1,c2,c3)]
+  mycolnames <- c('Odd','Even','All')
+  myrange=c(-5,6)
+  p2<-doscatterplus(myfile,tasknames[i],mycolnames,myrange)
+  p2
+   mypath<-here('plots')
+  plotname<-paste0(mypath,'/OddEven_',LETTERS[i],'.png')
+  ggsave(plotname,p2)
+
+  
+}
+
+```
+
 ```{r reliability, echo=FALSE, warning=FALSE}
 # Split-Half Reliability
 
-SHdata <- mydata %>% 
-  dplyr::select(Gorilla_ID, Hand_R, A_mean_odd, A_mean_even, B_mean_odd, B_mean_even, 
+SHdata <- ddat %>% 
+  dplyr::select(id, Hand_R, A_mean_odd, A_mean_even, B_mean_odd, B_mean_even, 
          C_mean_odd, C_mean_even, D_mean_odd, D_mean_even, 
          E_mean_odd, E_mean_even, F_mean_odd, F_mean_even)
 
@@ -168,24 +264,24 @@ The pirate plot shows LI values for the six tasks (A = Word Generation, B = Sent
 
 ```{r LIstats, echo=FALSE, warning=FALSE}
 
-LIdata <- mydata %>% 
-  dplyr::select(Gorilla_ID, Hand_R, A_mean_LI, B_mean_LI, C_mean_LI, D_mean_LI, E_mean_LI, F_mean_LI)
-colnames(LIdata) <- c('ID','Hand','A','B','C','D','E','F')
+LIdata <- ddat %>% 
+  dplyr::select(id, Hand_R, A_mean_LI, B_mean_LI, C_mean_LI, D_mean_LI, E_mean_LI, F_mean_LI)
+colnames(LIdata) <- c('ID','RHand','A','B','C','D','E','F')
 longdata <- pivot_longer(data = LIdata, cols = c(3:8), names_to = 'Task', values_to = 'LI')
-pirateplot(data = longdata, LI ~ Task * Hand)
+pirateplot(data = longdata, LI ~ Task * RHand)
 abline(h=0)
 title(main=paste0('Pirate Plot of LI Data, n=',length(LIdata$ID)))
 
 # One sample t-tests: Is LI different to zero?
 t1_results = matrix(data=NA, nrow= 12, ncol = 4)
 t1_results = as.data.frame(t1_results)
-colnames(t1_results) = c('Task','Hand','t','p')
+colnames(t1_results) = c('Task','RHand','t','p')
 hand = c('Left','Right')
 for (h in 1:2){
   for (t in 1:6){
-    myt = t.test(LIdata[which(LIdata$Hand == hand[h]), t+2])
+    myt = t.test(LIdata[LIdata$RHand == (h-1), t+2])
     t1_results$Task[6*(h-1)+t] = LETTERS[t]
-    t1_results$Hand[6*(h-1)+t] = hand[h]
+    t1_results$RHand[6*(h-1)+t] = hand[h]
     t1_results$t[6*(h-1)+t] = round(myt$statistic, 3)
     t1_results$p[6*(h-1)+t] = round(myt$p.value, 3)
   }
@@ -197,8 +293,7 @@ t2_results = matrix(data=NA, nrow= 6, ncol = 3)
 t2_results = as.data.frame(t2_results)
 colnames(t2_results) = c('Task','t','p')
 for (t in 1:6){
-    myt = t.test(LIdata[which(LIdata$Hand == 'Left'), t+2], 
-                 LIdata[which(LIdata$Hand == 'Right'), t+2], paired = FALSE, )
+    myt = t.test(LIdata[,t+2]~LIdata$RHand, paired = FALSE)
     t2_results$Task[t] = LETTERS[t]
     t2_results$t[t] = round(myt$statistic, 3)
     t2_results$p[t] = round(myt$p.value, 3)
@@ -206,38 +301,109 @@ for (t in 1:6){
 kable(t2_results)
 
 ```
-# FTCD measures  
+From original analysis plan
+## Step 0. 
+__Basic descriptives__  
+Distributions of data will be visualised in scatterplots, showing pairwise associations between the three LI measures, with handedness colour-coded. As well as providing a table with means and SDs of all variables, we will compute split-half reliability for the online battery measures by correlating LIs obtained with alternate blocks of items for each task, and for the Doppler measures from alternate trials. Spearman correlations will be used to avoid inflated reliability from unduly influential datapoints.
 
-The following steps are taken from script analysis_plan_COLARR.Rmd from December 14th 2020.  
-In that script we used simulated data.  Steps 1-2 involve online test data, and later steps compare online and fTCD.  For now, we just look at analysis of fTCD.  
 
-## Step 3
-__The data will fit a model where 'language generation' tasks cluster together on one factor, and 'receptive language’ tasks on a second factor.__  
+## Step 1. 
+__Prediction: On the online battery, dichotic and visual-half-field tasks will show significant left-brain lateralisation at the group level, with this effect being stronger in right- than left-handers.__    
 
-It is predicted that factors will be correlated, but the fit of a 2-factor model will be superior to a single-factor model where all LIs load on a common factor.
- 
-The analysis conducted by Woodhead et al (2019, 2020) used an exploratory bifactor model in which each task could load on each of two factors. Because we had two measures for each task (from test and retest sessions), this exploratory approach was adequately powered. The current study will use confirmatory factor analysis, using a prespecified two-factor model which constrains which indicators can load on two factors. This will be compared to a unitary model, in which all tasks load on a single factor.
- 
+To examine lateralisation at the brain level for each task will conduct the following analyses. Following Parker et al. (2020), we will conduct Shapiro-Wilk tests to check whether the distributions are normal for each measure. If distributions are normal, we will conduct a one-sample t-test to assess whether LIs at the group level are different from zero; otherwise a a Wilcoxon one-sample v test will be used.
 
 
 
-```{r modelfit}
+## Test for normality
 
-#just creating clones of variables for compatibility of names with original script
+```{r shapirowilk}
 
-alldata$P1 <- alldata$A_mean_LI
-alldata$P2 <- alldata$B_mean_LI
-alldata$P3 <- alldata$C_mean_LI
-alldata$R1 <- alldata$D_mean_LI
-alldata$R2 <- alldata$E_mean_LI
-alldata$R3 <- alldata$F_mean_LI
+ocols <- c("id","Hand_R","DL_zlat","RDT_RT_zlat","WC_RT_zlat","colourScales_zlat","CF_zlat")
+thisdat <- odat[odat$Session.1.included=="include",ocols]
 
-#Add correlation matrix
+  for (t in 3:7){ #each test
+    s<-shapiro.test(thisdat[,t])$p.value
+    print(paste0(colnames(thisdat)[t],' Normality test, p-value: ',round(s,3)))
+    }
 
-LIcols <- c("P1","P2","P3","R1","R2","R3")
-wantcols <- c("Sex_F","Hand_R",LIcols)
 
 ```
+
+
+## Test whether population mean is different from zero  
+
+```{r onesamplet}
+
+
+  for (t in 3:7){ #each test
+    x<-t.test(thisdat[,t])
+    print(paste0(colnames(thisdat)[t],': mean = ',round(x$estimate,3),', t=', round(x$statistic,3),', p-value = ',round(x$p.value,4)))
+    }
+
+
+```
+
+Check distributions comparing L and R handers
+
+```{r densfunction}
+# Density plot 
+densplotfunc<-function(myfile,mymain){
+
+  overallt <- t.test(myfile$thiscol,y=NULL,mu=0)
+  LRt<-t.test(myfile$thiscol~myfile$Handed)
+  mymeans<-round(by(myfile$thiscol,myfile$Handed,mean,na.rm=T),3)
+  mysds<-round(by(myfile$thiscol,myfile$Handed,sd,na.rm=T),3)
+  text1 <- print(paste0("Overall mean \ncompared with 0:\n t=",round(overallt$statistic,2),",p = ",round(overallt$p.value,3)))
+  text2 <- print(paste0("L vs R handers: \nt=",round(LRt$statistic,2),",p = ",round(LRt$p.value,3)))
+
+p<-ggplot(myfile2,aes(x=thiscol, fill=Handed)) + geom_density(alpha=0.25)+
+xlab('LI')+ # for the x axis label
+ylab('Proportion')+
+xlim(-5, 5)+
+ylim(0,.4)+
+annotate("text", x = -4, y = .35,label=text1,size=3)+
+annotate("text", x = -4, y = .25,label=text2,size=3)+
+geom_vline(xintercept= -1.65,linetype="dashed",colour="black")+
+geom_vline(xintercept=1.65,linetype="dashed",colour="black")+
+  ggtitle(mymain) # for the main title
+
+# Add mean lines
+
+mu <- ddply(myfile, "Handed", summarise, grp.mean=mean(thiscol,na.rm=T))
+p <- p+geom_vline(data=mu, aes(xintercept=grp.mean,color=Handed), linetype="dashed")
+
+
+return(p)
+}
+```
+
+```{r doplots}
+#run function for each measure
+
+thisplot <-0
+mytasks<-c('Dichotic','Rhyme judgement','Word Comprehension','Colour Scales','Chimeric faces')
+thisdat$Handed <- as.factor(thisdat$Hand_R)
+levels(thisdat$Handed)<-c('Left','Right')
+handc<-which(colnames(thisdat)=='Handed')
+for (col in 3:7){ #do for each online variable
+  thisplot<-thisplot+1
+  myfile2<-thisdat[,c(handc,col)]
+  mymain<-mytasks[(col-2)]
+  colnames(myfile2)[2]<-'thiscol'
+  p<-densplotfunc(myfile2,mymain)
+
+  plotname<-paste0(mypath,'/',mytasks[thisplot],'.png')
+
+  ggsave(plotname,width=6,height=4,units='in')
+  print(p)
+}
+
+```
+
+The main analysis of the behavioural laterality indices will follow the approach used by Bruckert et al (2020), using Multilevel Linear Modelling (MLM) to assess the influence of task and handedness on lateralisation strength (LI). This method allows us to test whether the heterogeneity of variance is comparable in left- and right-handers, as well as quantifying main effects of task and handedness. MLM will be conducted within R (R Core Team, 2019) using the nlme package (version 3.1-148; Pinheiro et al., 2020). Following Bruckert et al. two models will be fitted to the data. Model 1 will assume homogeneous variance model assumptions (i.e. variances between subjects and groups are equal for the two handedness groups). Model 2 will assume heterogeneous between-subject variance by group (i.e. different variances for the left and right handed group). Model fit will be assessed using a likelihood ratio test comparing Model 1 and Model 2. Coefficients for the fixed and random effects will be reported for the best fitting model. Both models will include fixed effects of handedness, task and their interaction: nlme::lme(fixed = LI ~ handedness*task, random = list(id = pdDiag(form= ~ 0 + handedness))).  
+
+We will adopt the following contrasts. For handedness, the contr.sum function from the base stats package will be used to implement summed-to-zero contrasts. This will correspond to a main effect of handedness. Helmert contrasts will be used for the task variable which compares each categorical level to the mean of the subsequent levels.
+
 
 
 ```{r trianglefunction,echo=F}
@@ -265,7 +431,7 @@ melted_cormat <- melt(upper_tri, na.rm = TRUE)
 ggheatmap <- ggplot(data = melted_cormat, aes(Var2, Var1, fill = value))+
  geom_tile(color = "white")+
  scale_fill_gradient2(low = "blue", high = "red", mid = "white", 
-   midpoint = 0.5, limit = c(0,1), space = "Lab", 
+   midpoint = 0, limit = c(-1,1), space = "Lab", 
    name="Pearson\nCorrelation") +
   theme_minimal()+ 
  theme(axis.text.x = element_text(angle = 45, vjust = 1, 
@@ -273,7 +439,7 @@ ggheatmap <- ggplot(data = melted_cormat, aes(Var2, Var1, fill = value))+
  coord_fixed()
 
 myheatmap <- ggheatmap + 
-geom_text(aes(Var2, Var1, label = round(value,3)), color = "black", size = 4) +
+geom_text(aes(Var2, Var1, label = round(value,3)), color = "black", size = 3) +
 theme(
   axis.title.x = element_blank(),
   axis.title.y = element_blank(),
@@ -289,6 +455,181 @@ theme(
 
 return(myheatmap)}
 ```
+
+
+## Multilevel linear model
+This is run on the online measures
+```{r MLL}
+
+
+#remove cases with missing data
+thisdat <- thisdat[complete.cases(thisdat),]
+#First convert files to long form
+longdat <- thisdat %>% gather("task", "LI", -c(id,Hand_R))
+
+longdat$task<-as.factor(longdat$task)
+longdat$Hand_R<-as.factor(longdat$Hand_R)
+
+
+# Homogeneous (base model)
+mod0<-lme(fixed=LI~Hand_R*task, 
+          random=list(id=pdSymm(form=~1)),
+          data=longdat, 
+          method="REML",contrasts=c(Hand_R='contr.sum',task='contr.helmert'))
+
+print(summary(mod0))
+
+# Heterogeneous (alternative model)
+
+mod1<-lme(fixed=LI ~ Hand_R*task, 
+          random=list(id=pdDiag(form= ~ 0 + Hand_R)),
+          data=longdat,
+          method="REML",contrasts=c(Hand_R='contr.sum',task='contr.helmert'))
+
+sum.mod1<-summary(mod1)
+print(summary(mod1))
+
+#Likelihood ratio test
+
+LRtest <- anova(mod0,mod1)
+print('Homogeneous vs heterogeneous model')
+print(LRtest)
+
+```
+
+## Step 2
+__2. The pattern of correlation between laterality indices from online measures will reflect the extent to which they involve implicit speech production, rather than whether they involve spoken or written language. Thus we anticipate dissociation between the rhyme judgement task and the other two measures (dichotic listening and OVP task), which is not accountable for in terms of low reliability of measures.__ 
+
+For prediction 2 we focus on predicting patterns of covariance between the three online tasks, as we do not have sufficient indicators for modeling with latent variables. We prespecify four possible covariance structures, which are then compared using AIC weights. This is a subset of SEM that does not include any latent variables or directional paths. It allows us to constrain particular covariance patterns and report the 'best' model according to AIC weights.
+
+The four models are:  
+Model A, where all LIs are intercorrelated to a similar degree
+Model B1,  where LIs for the two receptive language measures (dichotic listening and optimal viewing task) are intercorrelated, but independent of rhyme detection
+Model B2, where LIs for the two tasks involving visual presentation and written language (optimal viewing and rhyme detection) are intercorrelated, and independent of the auditory task, dichotic listening.
+Model C, where all LIs are independent of one another.
+
+Models B1 and B2 are mathematically equivalent, differing only in the specific variables that are correlated. On a priori grounds, we favour model B1, which is compatible with our overall 2-factor model of language lateralisation. We mention B2, however, as this pattern of correlation might occur if the laterality index was dependent more on mode of presentation (visual vs auditory) than on task demands. In the section below on sample size justification, we outline the syntax used for this method and show that our sample size is adequate to distinguish between models.  Note that where we specify tests as correlated in a model, the extent of correlation will be constrained by test reliability. If the reliability of any of our measures is lower than .5, this would limit the interpretation of the models. 
+
+
+
+
+
+```{r aicmodels}
+#Specify models
+
+  #Model A all correlated
+    modelA<-"
+    rhyme~~dichotic
+    rhyme~~comp
+    dichotic~~comp
+    "
+    #Model B 2 correlated (ovp and dichotic)
+    modelB<-"
+    rhyme~~0*dichotic
+    rhyme~~0*comp
+    dichotic~~comp"
+    
+    #model C all independent
+    modelC<-"
+    rhyme~~0*dichotic
+    rhyme~~0*comp
+    dichotic~~0*comp"
+
+    #Model BB 2 correlated (wc and rhyme)
+    modelBB<-"
+    rhyme~~0*dichotic
+    rhyme~~comp
+    dichotic~~0*comp"
+    
+```    
+
+```{r runAIC}
+
+thisdat <- odat[odat$Session.1.included=="include",ocols]
+
+AICdf <- data.frame(matrix(NA,nrow=3,ncol=8))
+colnames(AICdf)<-c('dataset','hand','modelA','modelB','modelC','modelBB','bestfit','chi.p.vs.C')
+handgps <- c('All','R.only','L.only')
+
+
+thisrow<-0
+latcols <- c('dichotic','rhyme','comp','colscales','chimeric')
+colnames(thisdat)[3:7]<-latcols
+aicdatall <- thisdat #just renaming here for consistency with later script
+
+  for (h in 1:3){ #handedness grouping - all, R only, Lonly}
+    
+    aicdat<-aicdatall
+     if(h==2){aicdat<-aicdatall[aicdatall$Hand_R==1,]} #right-handers only
+    if(h==3){aicdat<-aicdatall[aicdatall$Hand_R==0,]} #left-handers only  
+
+    makeheatmap(aicdat,latcols)
+    
+    thisrow<-thisrow+1
+ 
+    fitA <- cfa(modelA, data=aicdat) #
+    fitB <- cfa(modelB, data=aicdat)
+    fitC <- cfa(modelC, data=aicdat)
+    fitBB <- cfa(modelBB,data=aicdat)
+    
+   aic_vector1<- c(fitMeasures(fitA, "aic"),fitMeasures(fitB, "aic"),fitMeasures(fitC, "aic"),fitMeasures(fitBB,"aic"))
+    
+    AICdf[thisrow,3:6]<-round(akaike.weights(aic_vector1)$weights,3)
+   bestfit <- which(AICdf[thisrow,3:6]==max(AICdf[thisrow,3:6]))
+     AICdf$bestfit[thisrow] <- LETTERS[bestfit]
+     AICdf$hand[thisrow]<-handgps[h]
+     AICdf$dataset[thisrow] <- 'aicdat'
+
+    
+ if(bestfit<3)
+ {
+   compfit<-fitA
+   if(bestfit==2){compfit<-fitB}
+#If true model is not C, can it be distinguished from model C (all independent)
+    AICdf$chi.p.vs.C[thisrow] <- round(anova(compfit,fitC)$`Pr(>Chisq)`[2],3)
+ }
+ }#end of h loop
+
+
+
+flextable(AICdf)
+```
+
+
+
+# FTCD measures  
+
+The following steps are taken from script analysis_plan_COLARR.Rmd from December 14th 2020.  
+In that script we used simulated data.  Steps 1-2 involve online test data, and later steps compare online and fTCD.  For now, we just look at analysis of fTCD.  
+
+## Step 3
+__The data will fit a model where 'language generation' tasks cluster together on one factor, and 'receptive language’ tasks on a second factor.__  
+
+It is predicted that factors will be correlated, but the fit of a 2-factor model will be superior to a single-factor model where all LIs load on a common factor.
+ 
+The analysis conducted by Woodhead et al (2019, 2020) used an exploratory bifactor model in which each task could load on each of two factors. Because we had two measures for each task (from test and retest sessions), this exploratory approach was adequately powered. The current study will use confirmatory factor analysis, using a prespecified two-factor model which constrains which indicators can load on two factors. This will be compared to a unitary model, in which all tasks load on a single factor.
+ 
+
+
+
+```{r modelfit}
+alldata<-read.csv("fTCD_data.csv")
+#just creating clones of variables for compatibility of names with original script
+
+ddat$P1 <- ddat$A_mean_LI
+ddat$P2 <- ddat$B_mean_LI
+ddat$P3 <- ddat$C_mean_LI
+ddat$R1 <- ddat$D_mean_LI
+ddat$R2 <- ddat$E_mean_LI
+ddat$R3 <- ddat$F_mean_LI
+
+#Add correlation matrix
+
+LIcols <- c("P1","P2","P3","R1","R2","R3")
+wantcols <- c("Sex_F","Hand_R",LIcols)
+
+```
+
 
 
 ```{r factormodels,echo=F}
@@ -308,11 +649,11 @@ f2 =~ R1 + R2 + R3  #2 factor model: no constraint on covariance
 
 '
 
-fit1 <- cfa(model.h1, data=alldata)
+fit1 <- cfa(model.h1, data=ddat)
 sfit1 <-summary(fit1,fit.measures=TRUE)
 sfit1
 
-fit2 <- cfa(model.h2, data=alldata)
+fit2 <- cfa(model.h2, data=ddat)
 sfit2 <- summary(fit2,fit.measures=TRUE)
 sfit2
 
@@ -326,8 +667,8 @@ The fit of both the one-factor and the two-factor model is poor. Therefore, as p
 ```{r improvemodel,echo=F}
 
 #check what data looks like
-
-myheatmap <- makeheatmap(alldata,LIcols)
+LIcols <- c("A_mean_LI","B_mean_LI","C_mean_LI","D_mean_LI","E_mean_LI","F_mean")
+myheatmap <- makeheatmap(ddat,LIcols)
 myheatmap
 
 set.seed(2)
@@ -341,8 +682,8 @@ f2 =~ P3 + R1 + R2 + R3  #revised 2 factor model: no constraint on covariance
 
 '
 
-alldata$halfgroup <-1+ rbinom(nrow(alldata),1,.5) #random assignment to 1 or 2
-halfdata <- alldata[alldata$halfgroup==1,]
+ddat$halfgroup <-1+ rbinom(nrow(ddat),1,.5) #random assignment to 1 or 2
+halfdata <- ddat[ddat$halfgroup==1,]
 fit1h <- cfa(model.h1, data=halfdata)
 sfit1h <- summary(fit1h,fit.measures=TRUE)
 sfit1h
@@ -358,7 +699,7 @@ anova(fit1h,fit3h)
 
 model.h4 <- '
 f1 =~ P1 + P2 + P3
-f2 =~ P3 + R1 + R2 + R3  
+f2 =~ R1 + R2 + R3  +P3
 
 '
 fit4h <- cfa(model.h4, data=halfdata)
@@ -370,7 +711,7 @@ anova(fit1h,fit4h)
 #This gives better fit.
 
 #Now try on half2
-halfdata2 <- alldata[alldata$halfgroup==2,]
+halfdata2 <- ddat[ddat$halfgroup==2,]
 
 fit1h2 <- cfa(model.h1, data=halfdata2)
 sfit1h2 <- summary(fit1h2,fit.measures=TRUE)
@@ -391,15 +732,12 @@ anova(fit1h2,fit4h2)
 
 
 
-correlate(alldata[alldata$Hand_R=='Right',LIcols])
-correlate(alldata[alldata$Hand_R=='Left',LIcols])
 
-
-wantcols <- c("Sex_F","Hand_R",LIcols)
-dopdat <- alldata[,wantcols]
+wantcols <- c("id","Sex_F","Hand_R",LIcols)
+dopdat <- ddat[,wantcols]
 offset <- which(colnames(dopdat)=='P1')-1
 dopdat$colour<-2
-dopdat$colour[dopdat$Hand_R=='Right']<-1
+dopdat$colour[dopdat$Hand_R==1]<-1
 for (i in 1:5){
   for (j in (i+1):6){
     fullnames<-c('WordGen','SentGen','PhonDec','WordComp','SentComp','SyntaxDec')
@@ -407,14 +745,14 @@ for (i in 1:5){
     namey <- fullnames[j]
     plot(dopdat[,(i+2)],dopdat[,(j+2)],main=paste0(namex,"/",namey),xlab=namex,ylab=namey,
     col=dopdat$colour,pch=16,ylim=c(-6,10),xlim=c(-6,10))
-    abline(h=mean(dopdat[dopdat$Hand_R=="Left",(j+offset)],na.rm=T),col=2,lty=2)
-    abline(h=mean(dopdat[dopdat$Hand_R=="Right",(j+offset)],na.rm=T),col=1,lty=2)
-    abline(v=mean(dopdat[dopdat$Hand_R=="Left",(i+offset)],na.rm=T),col=2,lty=2)
-    abline(v=mean(dopdat[dopdat$Hand_R=="Right",(i+offset)],na.rm=T),col=1,lty=2)
+    abline(h=mean(dopdat[dopdat$Hand_R==0,(j+offset)],na.rm=T),col=2,lty=2)
+    abline(h=mean(dopdat[dopdat$Hand_R==1,(j+offset)],na.rm=T),col=1,lty=2)
+    abline(v=mean(dopdat[dopdat$Hand_R==0,(i+offset)],na.rm=T),col=2,lty=2)
+    abline(v=mean(dopdat[dopdat$Hand_R==1,(i+offset)],na.rm=T),col=1,lty=2)
     abline(v=0,col='grey',lty=1)
     abline(h=0,col='grey',lty=1)
-    corL <- cor(dopdat[dopdat$Hand_R=="Left",(j+offset)],dopdat[dopdat$Hand_R=="Left",(i+offset)],use="complete.obs")
-    corR <- cor(dopdat[dopdat$Hand_R=="Right",(j+offset)],dopdat[dopdat$Hand_R=="Right",(i+offset)],use="complete.obs")
+    corL <- cor(dopdat[dopdat$Hand_R==0,(j+offset)],dopdat[dopdat$Hand_R==0,(i+offset)],use="complete.obs")
+    corR <- cor(dopdat[dopdat$Hand_R==1,(j+offset)],dopdat[dopdat$Hand_R==1,(i+offset)],use="complete.obs")
     text(-4,8,paste0("Left-hander: r = ",round(corL,3)),col=2)
     text(-4,7,paste0("Right_hander: r = ",round(corR,3)),col=1)
   }
@@ -430,21 +768,45 @@ The measurement invariance command tests a series of models which progressively 
 ```{r testLRdiffmodel}
 
 
-mydf<- dopdat[dopdat$Hand_R=='Right',]
+mydf<- dopdat[dopdat$Hand_R==1,]
 Rcorrs <- makeheatmap(mydf,LIcols)
-mydf<- dopdat[dopdat$Hand_R=='Left',]
+mydf<- dopdat[dopdat$Hand_R==0,]
 Lcorrs <- makeheatmap(mydf,LIcols)
 Rcorrs
 Lcorrs
 
 
-fit4 <- cfa(model.h4, data=alldata,group="Hand_R")
+fit4 <- cfa(model.h4, data=dopdat,group="Hand_R")
 
 sfit4 <- summary(fit4,fit.measures=TRUE)
 
-measurementInvariance(model=model.h4, data=alldata,group="Hand_R")
+measurementInvariance(model=model.h4, data=dopdat,group="Hand_R")
 
 ```
+This suggests that the factor structure should look similar for L and R handers, but means will differ.  
+Create factor scores and plot.  
+
+```{r factorscores, echo=F}
+
+fit4all <- cfa(model.h4, data=dopdat)
+sfit4all <- summary(fit4all,fit.measures=TRUE)
+sfit4all
+facwtsA <- sfit4all$PE$est[1:3]
+facwtsB <- sfit4all$PE$est[4:7]
+
+dopdat$F4A <- dopdat$P1*facwtsA[1]+dopdat$P2*facwtsA[2]+dopdat$P3*facwtsA[3]
+dopdat$F4B <- dopdat$R1*facwtsB[1]+dopdat$R2*facwtsB[2]+dopdat$R3*facwtsB[3]+dopdat$P1*facwtsB[4]
+plot(dopdat$F4A,dopdat$F4B,col=dopdat$colour,pch=16)
+rhanders <- dopdat[dopdat$Hand_R==1,]
+lhanders <- dopdat[dopdat$Hand_R==0,]
+abline(v=mean(rhanders$F4A,na.rm=T))
+abline(h=mean(rhanders$F4B,na.rm=T))
+abline(v=mean(lhanders$F4A,na.rm=T),col=2)
+abline(h=mean(lhanders$F4B,na.rm=T),col=2)
+
+
+```
+
 
 ## Step 5
 __On categorical analysis, individuals who depart from left-brained laterality on one or more tasks will be more likely to be left-handed than those who are consistently left-lateralised.__
@@ -459,24 +821,93 @@ dopdat$catx3<-1
 dopdat$catx4<-1
 dopdat$catx5<-1
 dopdat$catx6<-1
-
+offset1 <- 3
 offset2 <- which(colnames(dopdat)=='catx1')-1
 
-chitab<-data.frame(matrix(NA,ncol=11,nrow=6))
+chitab<-data.frame(matrix(NA,ncol=7,nrow=6))
 for (mycol in 1: 6){
-  w<-which(dopdat[,(mycol+offset)]<0) #find values below zero
+  w<-which(dopdat[,(mycol+offset1)]<0) #find values below zero
   dopdat[w,(mycol+offset2)]<-0 #recode catx value to zero
   t<-table(dopdat[,(mycol+offset2)],dopdat$Hand_R)
   tp<-round(prop.table(t,2),2) #proportions by handedness
-  chitab[mycol,1]<-colnames(dopdat)[(mycol+offset)]
-  chitab[mycol,c(2,4,6,8)]<-t
-  chitab[mycol,c(3,5,7,9)]<-tp
-  chitab[mycol,10] <- round(chisq.test(t)$statistic,2)
-  chitab[mycol,11] <- round(chisq.test(t)$p.value,3)
+  chitab[mycol,1]<-colnames(dopdat)[(mycol+offset1)]
+  chitab[mycol,2]<-paste0(t[2,1],"/",(t[1,1]+t[2,1]))
+  chitab[mycol,3]<-tp[2,1]
+  chitab[mycol,4]<-paste0(t[2,2],"/",(t[1,2]+t[2,2]))
+  chitab[mycol,5]<-tp[2,2]
+  chitab[mycol,6] <- round(chisq.test(t)$statistic,2)
+  chitab[mycol,7] <- round(chisq.test(t)$p.value,3)
 }
-colnames(chitab)<-c('Measure','LH.Rbrain','LH.Rb%','LH.Lbrain','LH.Lb%','RH.Rbrain','RH.Rb%','RH.Lbrain','RH.Lb%','chisq','p')
-flextable(chitab)
+colnames(chitab)<-c('Measure','N.Lhand.Lhem','%Lhand.Lhem','N.Rhand.Lhem','%Rhand.Lhem','chisq','p')
+ft <- flextable(chitab)
+ft <- align(ft, align = "right", part = "all")
+ft
 
 ```
 
+
+Prediction 5 moves to categorical analysis. A simple approach is to dichotomise laterality at a cutoff of zero for each task, and then perform a chi square analysis to test for association with handedness.  For 6 measures, we adopt a Bonferroni-corrected alpha level of .05/6 = .008. 
+
+```{r chisq.catsbilat}
+#use categorical from mean/SE 
+catcols <- paste0(LETTERS[1:6],'_mean_laterality')
+offset2 <- which(colnames(dopdat)==catcols[1])-1
+if(length(offset2)==0){
+  bit<-ddat[,catcols]
+  dopdat<-cbind(dopdat,bit)
+  offset2 <- which(colnames(dopdat)==catcols[1])-1}
+offset1 <- 3
+
+chitab<-data.frame(matrix(NA,ncol=9,nrow=6))
+colnames(chitab)<-c('Measure','N.Lhand.bi','%Lhand.bi','N.Lhand.R','%Lhand.R','N.Rhand.bi','%Rhand.bi','N.Rhand.R','%Rhand.R')
+for (mycol in 1: 6){
+  t<-table(dopdat[,(mycol+offset2)],dopdat$Hand_R)
+  tp<-round(prop.table(t,2),2) #proportions by handedness
+  chitab[mycol,1]<-LETTERS[mycol]
+  chitab[mycol,2]<-paste0(t[1,1],"/",(t[1,1]+t[2,1]+t[3,1]))
+  chitab[mycol,3]<-tp[1,1]
+  chitab[mycol,4]<-paste0(t[3,1],"/",(t[1,1]+t[2,1]+t[3,1]))
+  chitab[mycol,5]<-tp[3,1]
+  chitab[mycol,6]<-paste0(t[1,2],"/",(t[1,2]+t[2,2]+t[3,2]))
+  chitab[mycol,7]<-tp[1,2]
+  chitab[mycol,8]<-paste0(t[3,2],"/",(t[1,2]+t[2,2]+t[3,2]))
+  chitab[mycol,9]<-tp[3,2]
+  
+}
+
+ft <- flextable(chitab)
+ft <- align(ft, align = "right", part = "all")
+ft
+
+```
+
+# Relationship between fTCD and behavioural laterality indices  
+## Step 6
+__The laterality profile obtained with the online language battery will be significantly associated with the profile seen with direct measure of cerebral blood flow using fTCD, with laterality on dichotic listening and comp relating more strongly to receptive language tasks, and rhyme judgement to language generation tasks.__
+
+```{r bigcorr,echo=F}
+ocols <- c("DL_zlat","RDT_RT_zlat","WC_RT_zlat")
+o2cols <-c("DL_zlat","colourScales_zlat","CF_zlat")
+dcols <- c("A_mean_LI","B_mean_LI","C_mean_LI","D_mean_LI","E_mean_LI","F_mean_LI")
+wantcols <- c("Sex_F","Hand_R",ocols,dcols,o2cols)
+bothlats <- alldat[,wantcols]
+
+
+  makeheatmap(bothlats,c(ocols,dcols))
+  rlats <- bothlats[bothlats$Hand_R==1,]
+    makeheatmap(rlats,c(ocols,dcols))
+llats <- bothlats[bothlats$Hand_R==0,]
+    makeheatmap(llats,c(ocols,dcols))
+    
+makeheatmap(rlats,c(o2cols,dcols))
+makeheatmap(llats,c(o2cols,dcols))
+```
+
+
+
+## Session information
+
+```{r sessinf}
+sessionInfo()
+```
 
